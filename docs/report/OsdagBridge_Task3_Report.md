@@ -3,7 +3,7 @@
 **Project:** OsdagBridge (FOSSEE / Indian Institute of Technology Bombay)  
 **Branch Target:** `dev` (Upstream: `Nidhikhare12:dev`)  
 **Task Module:** Task 3 — UI, 2D CAD & Plotting Enhancements  
-**Status:** Completed & Verified (19/19 Unit Tests Passing)  
+**Status:** Completed & Verified (20/20 Unit Tests Passing)  
 
 ---
 
@@ -79,12 +79,14 @@ When a user double-clicks the canvas:
 1. `mouseDoubleClickEvent` transforms click coordinates from viewport space to widget space (accounting for pan offsets and zoom scaling).
 2. It performs point-in-polygon hit-testing against `self.dimension_callouts`.
 3. If an editable callout is clicked, a floating `QLineEdit` with styled border and high-contrast background is spawned over the text.
-4. Input is validated using `QDoubleValidator(bottom=0.001)`.
-5. Upon pressing **Enter** or losing focus, the editor:
+4. Input is validated using `QDoubleValidator(bottom=0.001)` and strict positive float logic ($> 0$).
+5. Upon pressing **Enter** or **clicking outside the box (FocusOut)**:
    - Validates that the numeric value is strictly positive ($> 0$).
-   - Converts the value from display units ($m$ or $mm$) to internal parameters.
+   - Converts the value from display units ($m$ or $mm$) to internal parameters ($m \leftrightarrow mm$).
    - Emits `self.cad_parameter_edited.emit(param_key, val_in_meters)`.
-   - Triggers `self.update()`.
+   - On Enter with an invalid value, displays a friendly warning dialog (`CustomMessageBox`) and retains focus for immediate correction.
+   - On FocusOut (clicking outside), automatically commits if valid and dismisses cleanly.
+   - Triggers `self.update()` and notifies parent views for synchronized redrawing.
 
 ### 3.4 Signal-Slot Synchronization
 - **In `BridgeDualCADWidget` (`cad_dual_view.py`)**: Intercepts edits from either the top-view or cross-section child canvas, updates the synchronized `params` dictionary in both child widgets, and forwards `cad_parameter_edited`.
@@ -133,7 +135,7 @@ def _validate_custom_inputs(self) -> list[str]:
     def _check_empty(key: str, name: str):
         val = d.get(key)
         if val is None or str(val).strip() == "":
-            errors.append(f"The custom value for '{name}' cannot be empty.")
+            errors.append(f"Error: The custom value for '{name}' cannot be empty.")
 
     # 1. Crash Barrier
     if d.get(KEY_CB_TYPE) == VALUE_CUSTOM:
@@ -222,34 +224,56 @@ def closeEvent(self, event):
 
 ## 5. Task III: Transverse Member Analysis Results & Plotting
 
-### 5.1 Geometric Member Isolation
-In `PlateGirderAnalysisResults` (`analysis_results.py`), transverse members (cross-girders, diaphragms, and cross-bracings) are programmatically distinguished from longitudinal members by inspecting the coordinates of connected end-nodes:
+### 5.1 Geometric Member Isolation & Routing via `results_data.py`
+In strict compliance with architectural guidelines, the transverse classification and data extraction logic is routed directly through `src/osdagbridge/core/bridge_types/plate_girder/results_data.py`. Transverse members (cross-girders, diaphragms, and cross-bracings) are distinguished from longitudinal members by inspecting the spatial coordinates of connected end-nodes:
+
+```python
+def classify_grillage_members(nodes: dict, members: dict, z_tol: float = 1e-3) -> tuple[list[int], list[int]]:
+    """Classify grillage members into longitudinal and transverse element tags."""
+    longitudinal_members = []
+    transverse_members = []
+    for tag, (n1, n2) in members.items():
+        if n1 not in nodes or n2 not in nodes:
+            continue
+        c1, c2 = nodes[n1], nodes[n2]
+        if abs(c1[2] - c2[2]) < z_tol and abs(c1[1] - c2[1]) < z_tol:
+            longitudinal_members.append(int(tag))
+        else:
+            transverse_members.append(int(tag))
+    return longitudinal_members, transverse_members
+
+def build_transverse_connectivity(nodes: dict, members: dict, z_tol: float = 1e-3) -> dict:
+    """Extract and structure transverse member elements, their connected nodes, and element mappings."""
+    _, transverse_elements = classify_grillage_members(nodes, members, z_tol=z_tol)
+    t_nodes_set = set()
+    element_map = []
+    for eid in transverse_elements:
+        if eid not in members:
+            continue
+        n1, n2 = members[eid]
+        t_nodes_set.add(n1)
+        t_nodes_set.add(n2)
+        element_map.append((eid, n1, n2))
+
+    sorted_nodes = sorted(
+        list(t_nodes_set),
+        key=lambda n: (nodes[n][2], nodes[n][0]) if n in nodes else (0.0, 0.0)
+    )
+    return {
+        "elements": transverse_elements,
+        "nodes": sorted_nodes,
+        "element_map": element_map,
+    }
+```
+
+In `PlateGirderAnalysisResults` (`analysis_results.py`), `build_transverse_members()` routes directly to this module:
 
 ```python
 def build_transverse_members(self) -> dict:
     """Extract and structure all transverse element tags and connected nodes."""
+    from osdagbridge.core.bridge_types.plate_girder.results_data import build_transverse_connectivity
     nodes, elements, _ = self.build_grillage_connectivity()
-    _z_tol = 1e-3
-    t_elements = []
-    t_nodes_set = set()
-    element_map = []
-    for eid, (n1, n2) in elements.items():
-        if n1 not in nodes or n2 not in nodes:
-            continue
-        c1, c2 = nodes[n1], nodes[n2]
-        # Transverse members: nodes differ in Z or not strictly longitudinal in Z and Y
-        if not (abs(c1[2] - c2[2]) < _z_tol and abs(c1[1] - c2[1]) < _z_tol):
-            t_elements.append(eid)
-            t_nodes_set.add(n1)
-            t_nodes_set.add(n2)
-            element_map.append((eid, n1, n2))
-
-    sorted_nodes = sorted(list(t_nodes_set), key=lambda n: (nodes[n][2], nodes[n][0]))
-    return {
-        "elements": t_elements,
-        "nodes": sorted_nodes,
-        "element_map": element_map,
-    }
+    return build_transverse_connectivity(nodes, elements)
 ```
 
 ### 5.2 Response Extraction Data Pipeline
@@ -291,6 +315,7 @@ A suite of 19 comprehensive unit tests was developed and executed to validate th
 | `test_transverse_results_plotting.py` | `test_find_transverse_elements_and_bg_filter`| Asserts isolation of transverse vs. longitudinal elements. | **PASSED** |
 | `test_transverse_results_plotting.py` | `test_output_dock_transverse_member_in_dropdown` | Asserts Transverse Members item exists in Output Dock dropdown. | **PASSED** |
 | `test_transverse_results_plotting.py` | `test_plate_girder_analysis_results_transverse_members` | Tests synthetic dataset force/disp extraction for transverse members. | **PASSED** |
+| `test_transverse_results_plotting.py` | `test_results_data_transverse_extraction` | Asserts direct data extraction functions in `results_data.py`. | **PASSED** |
 | `test_analyser.py` | `test_placeholder_analyser` | Core analyser test suite. | **PASSED** |
 | `test_designer.py` | `test_placeholder_designer` | Core designer test suite. | **PASSED** |
 | `test_io.py` | `test_placeholder_io` | Core I/O test suite. | **PASSED** |
