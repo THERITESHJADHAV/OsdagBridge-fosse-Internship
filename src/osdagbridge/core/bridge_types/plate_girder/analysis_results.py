@@ -493,29 +493,9 @@ class PlateGirderAnalysisResults:
 
     def build_transverse_members(self):
         """Extract and structure all transverse element tags and connected nodes."""
+        from osdagbridge.core.bridge_types.plate_girder.results_data import build_transverse_connectivity
         nodes, elements, _ = self.build_grillage_connectivity()
-        _z_tol = 1e-3
-        t_elements = []
-        t_nodes_set = set()
-        element_map = []
-        for eid, (n1, n2) in elements.items():
-            if n1 not in nodes or n2 not in nodes:
-                continue
-            c1, c2 = nodes[n1], nodes[n2]
-            # Transverse member: nodes differ in Z or not strictly longitudinal in Z and Y
-            if not (abs(c1[2] - c2[2]) < _z_tol and abs(c1[1] - c2[1]) < _z_tol):
-                t_elements.append(eid)
-                t_nodes_set.add(n1)
-                t_nodes_set.add(n2)
-                element_map.append((eid, n1, n2))
-
-        # Sort nodes by Z coordinate then X
-        sorted_nodes = sorted(list(t_nodes_set), key=lambda n: (nodes[n][2], nodes[n][0]))
-        return {
-            "elements": t_elements,
-            "nodes": sorted_nodes,
-            "element_map": element_map,
-        }
+        return build_transverse_connectivity(nodes, elements)
 
     def filter_girders(self, girder_map):
         return girder_map

@@ -2722,7 +2722,7 @@ class CrossSectionCADWidget(QWidget):
         editor.show()
         editor.setFocus()
 
-        def commit_value():
+        def commit_value(show_error=True):
             if not editor or not editor.isVisible():
                 return
             raw_text = editor.text().strip()
@@ -2731,15 +2731,19 @@ class CrossSectionCADWidget(QWidget):
                 if new_val <= 0:
                     raise ValueError("Value must be > 0")
             except Exception:
-                from osdagbridge.desktop.ui.dialogs.custom_messagebox import CustomMessageBox, MessageBoxType
-                CustomMessageBox(
-                    title="Invalid Input",
-                    text=f"The value for '{callout['display_name']}' must be a positive number greater than 0.",
-                    dialogType=MessageBoxType.Warning,
-                ).exec()
-                editor.setText(text_val)
-                editor.selectAll()
-                editor.setFocus()
+                if show_error:
+                    from osdagbridge.desktop.ui.dialogs.custom_messagebox import CustomMessageBox, MessageBoxType
+                    CustomMessageBox(
+                        title="Invalid Input",
+                        text=f"The value for '{callout['display_name']}' must be a positive number greater than 0.",
+                        dialogType=MessageBoxType.Warning,
+                    ).exec()
+                    editor.setText(text_val)
+                    editor.selectAll()
+                    editor.setFocus()
+                else:
+                    editor.deleteLater()
+                    self._inline_editor = None
                 return
 
             p_name = callout.get("param_name")
@@ -2757,7 +2761,7 @@ class CrossSectionCADWidget(QWidget):
 
             self.update()
 
-        editor.returnPressed.connect(commit_value)
+        editor.returnPressed.connect(lambda: commit_value(show_error=True))
 
         class EditorEventFilter(QObject):
             def __init__(self, parent_widget, edit_widget):
@@ -2777,8 +2781,7 @@ class CrossSectionCADWidget(QWidget):
 
             def _handle_focus_out(self):
                 if self.edit_widget and hasattr(self.parent_widget, "_inline_editor") and self.parent_widget._inline_editor == self.edit_widget:
-                    self.edit_widget.deleteLater()
-                    self.parent_widget._inline_editor = None
+                    commit_value(show_error=False)
 
         editor.installEventFilter(EditorEventFilter(self, editor))
 

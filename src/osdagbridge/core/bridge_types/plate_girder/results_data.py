@@ -93,6 +93,104 @@ def _build_nodes_members() -> tuple[dict, dict]:
     }
     return nodes, members
 
+build_nodes_members = _build_nodes_members
+
+
+def classify_grillage_members(nodes: dict, members: dict, z_tol: float = 1e-3) -> tuple[list[int], list[int]]:
+    """
+    Classify grillage members into longitudinal and transverse element tags based on node coordinates.
+    Longitudinal members have both connected nodes sharing the same Z and same Y coordinates.
+    All other members are classified as transverse members.
+
+    Returns
+    -------
+    tuple[list[int], list[int]]
+        (longitudinal_members, transverse_members)
+    """
+    longitudinal_members = []
+    transverse_members = []
+    for tag, (n1, n2) in members.items():
+        if n1 not in nodes or n2 not in nodes:
+            continue
+        c1, c2 = nodes[n1], nodes[n2]
+        if abs(c1[2] - c2[2]) < z_tol and abs(c1[1] - c2[1]) < z_tol:
+            longitudinal_members.append(int(tag))
+        else:
+            transverse_members.append(int(tag))
+    return longitudinal_members, transverse_members
+
+
+def build_transverse_connectivity(nodes: dict, members: dict, z_tol: float = 1e-3) -> dict:
+    """
+    Extract and structure transverse member elements, their connected nodes, and element mappings.
+    Distinguishes transverse element tags from longitudinal element tags.
+
+    Returns
+    -------
+    dict
+        {
+            "elements": [eid1, eid2, ...],
+            "nodes": [nid1, nid2, ...], # sorted by Z, then X
+            "element_map": [(eid, n1, n2), ...]
+        }
+    """
+    _, transverse_elements = classify_grillage_members(nodes, members, z_tol=z_tol)
+    t_nodes_set = set()
+    element_map = []
+    for eid in transverse_elements:
+        if eid not in members:
+            continue
+        n1, n2 = members[eid]
+        t_nodes_set.add(n1)
+        t_nodes_set.add(n2)
+        element_map.append((eid, n1, n2))
+
+    sorted_nodes = sorted(
+        list(t_nodes_set),
+        key=lambda n: (nodes[n][2], nodes[n][0]) if n in nodes else (0.0, 0.0)
+    )
+    return {
+        "elements": transverse_elements,
+        "nodes": sorted_nodes,
+        "element_map": element_map,
+    }
+
+
+def extract_transverse_member_forces(data: dict, load_case: str, component: str = None) -> list[dict]:
+    """
+    Extract internal forces (Fx, Vy, Vz, Tx, My, Mz) for transverse members from results data dictionary.
+    """
+    forces_dict = data.get("forces", {}).get(load_case, {})
+    transverse_elems = data.get("transverse_members", [])
+    results = []
+    for eid in transverse_elems:
+        elem_forces = forces_dict.get(str(eid), {})
+        if component:
+            results.append({"Element": eid, component: elem_forces.get(component)})
+        else:
+            results.append({"Element": eid, **elem_forces})
+    return results
+
+
+def extract_transverse_member_displacements(data: dict, load_case: str, component: str = None) -> list[dict]:
+    """
+    Extract displacements (Dx, Dy, Dz) for transverse member nodes from results data dictionary.
+    """
+    disp_dict = data.get("displacements", {}).get(load_case, {})
+    nodes = data.get("nodes", {})
+    members = data.get("members", {})
+    nodes_int = {int(k): v for k, v in nodes.items()}
+    members_int = {int(k): v for k, v in members.items()}
+    t_conn = build_transverse_connectivity(nodes_int, members_int)
+    results = []
+    for nid in t_conn.get("nodes", []):
+        node_disp = disp_dict.get(str(nid), {})
+        if component:
+            results.append({"Node": nid, component: node_disp.get(component)})
+        else:
+            results.append({"Node": nid, **node_disp})
+    return results
+
 
 def dump_full_data(
     model,
@@ -410,16 +508,7 @@ def _build_full_data(model, edge_dist: float = 0.0, dataset=None, lazy: bool = F
 
     # Classify members: longitudinal = both nodes share same Z and same Y
     _z_tol = 1e-3
-    longitudinal_members = []
-    transverse_members = []
-    for tag, (n1, n2) in members.items():
-        if n1 not in nodes or n2 not in nodes:
-            continue
-        if (abs(nodes[n1][2] - nodes[n2][2]) < _z_tol and
-                abs(nodes[n1][1] - nodes[n2][1]) < _z_tol):
-            longitudinal_members.append(tag)
-        else:
-            transverse_members.append(tag)
+    longitudinal_members, transverse_members = classify_grillage_members(nodes, members, z_tol=_z_tol)
 
     data: dict = {
         "nodes": {str(k): list(v) for k, v in nodes.items()},

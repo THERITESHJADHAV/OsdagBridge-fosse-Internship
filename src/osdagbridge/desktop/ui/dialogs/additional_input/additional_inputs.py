@@ -539,7 +539,7 @@ class AdditionalInputs(QDialog):
         def _check_empty(key: str, name: str):
             val = d.get(key)
             if val is None or str(val).strip() == "":
-                errors.append(f"The custom value for '{name}' cannot be empty.")
+                errors.append(f"Error: The custom value for '{name}' cannot be empty.")
 
         # 1. Crash Barrier (if Type == Custom)
         if d.get(KEY_CB_TYPE) == VALUE_CUSTOM:
@@ -630,10 +630,10 @@ class AdditionalInputs(QDialog):
     def _show_validation_errors(self, errors):  # utility: displays validation error list in a warning popup
         message = "\n".join(f"• {err}" for err in errors)
         CustomMessageBox(
-            title="Validation Errors",
+            title="Error",
             text=message,
             buttons=["OK"],
-            dialogType=MessageBoxType.Warning,
+            dialogType=MessageBoxType.Critical,
         ).exec()
 
     # ── Field Change Handling ────────────────────────────────────────────────────

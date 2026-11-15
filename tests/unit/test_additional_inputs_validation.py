@@ -60,6 +60,7 @@ def test_custom_validation_empty_crash_barrier():
     
     errors = dialog._validate_custom_inputs()
     assert any("Crash Barrier Material Density" in err for err in errors)
+    assert "Error: The custom value for 'Crash Barrier Material Density' cannot be empty." in errors
 
 
 def test_custom_validation_valid_crash_barrier():

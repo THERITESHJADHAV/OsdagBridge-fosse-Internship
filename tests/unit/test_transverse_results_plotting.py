@@ -138,3 +138,59 @@ def test_plate_girder_analysis_results_transverse_members():
     assert not df_coords.empty
     assert "Z (m)" in df_coords.columns
     assert len(df_coords) == 4
+
+
+def test_results_data_transverse_extraction():
+    from osdagbridge.core.bridge_types.plate_girder.results_data import (
+        classify_grillage_members,
+        build_transverse_connectivity,
+        extract_transverse_member_forces,
+        extract_transverse_member_displacements,
+    )
+    nodes = {
+        1: [0.0, 0.0, 0.0],
+        2: [10.0, 0.0, 0.0],
+        3: [0.0, 0.0, 3.0],
+        4: [10.0, 0.0, 3.0],
+    }
+    members = {
+        101: [1, 2],
+        102: [3, 4],
+        103: [1, 3],
+        104: [2, 4],
+    }
+    long_m, trans_m = classify_grillage_members(nodes, members)
+    assert long_m == [101, 102]
+    assert trans_m == [103, 104]
+
+    conn = build_transverse_connectivity(nodes, members)
+    assert conn["elements"] == [103, 104]
+    assert set(conn["nodes"]) == {1, 2, 3, 4}
+
+    data = {
+        "transverse_members": trans_m,
+        "nodes": {str(k): v for k, v in nodes.items()},
+        "members": {str(k): v for k, v in members.items()},
+        "forces": {
+            "LC1": {
+                "103": {"Fx_i": 10.0, "Vy_i": 20.0, "Vz_i": 30.0, "Tx_i": 4.0, "My_i": 5.0, "Mz_i": 60.0},
+                "104": {"Fx_i": 11.0, "Vy_i": 21.0, "Vz_i": 31.0, "Tx_i": 4.1, "My_i": 5.1, "Mz_i": 61.0},
+            }
+        },
+        "displacements": {
+            "LC1": {
+                "1": {"dx": 0.001, "dy": -0.005, "dz": 0.0002},
+                "2": {"dx": 0.001, "dy": -0.005, "dz": 0.0002},
+                "3": {"dx": 0.001, "dy": -0.006, "dz": 0.0003},
+                "4": {"dx": 0.001, "dy": -0.006, "dz": 0.0003},
+            }
+        }
+    }
+    f_res = extract_transverse_member_forces(data, "LC1")
+    assert len(f_res) == 2
+    assert f_res[0]["Element"] == 103
+    assert f_res[0]["Mz_i"] == 60.0
+
+    d_res = extract_transverse_member_displacements(data, "LC1", component="dy")
+    assert len(d_res) == 4
+    assert d_res[0]["dy"] == -0.005
